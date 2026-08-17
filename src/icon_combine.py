@@ -14,12 +14,37 @@ BG_COLOR = (0, 0, 0, 255)     # black (opaque)
 MAX_ICONS = 5                # max number of icons in a combined image
 
 # ----------------------------------------------------------------------
-# 2. LOAD ALL ICON IMAGES (Icon_*.png in this directory)
+# 2. LOAD ALL ICON IMAGES IN THE REQUESTED ORDER
 # ----------------------------------------------------------------------
-icon_paths = sorted(glob("Icon_*.png"))
+# The first seven columns are fixed to:
+# 0 Vegetarian, 1 Vegan, 2 No Alcohol, 3 No Dairy, 4 No Gluten, 5 No Nuts, 6 Halal
+# The remaining nine icons are kept in a deterministic order.
+ICON_ORDER = [
+    "Icon_Vegetarian.png",
+    "Icon_Vegen.png",
+    "Icon_NoAlcohol.png",
+    "Icon_NoDairy.png",
+    "Icon_NoGluten.png",
+    "Icon_NoNuts.png",
+    "Icon_Halal.png",
+    "Icon_Ketogenic.png",
+    "Icon_NoEggs.png",
+    "Icon_NoFish.png",
+    "Icon_NoMustard.png",
+    "Icon_NoPeanuts.png",
+    "Icon_NoPork.png",
+    "Icon_NoSesame.png",
+    "Icon_NoShellfish.png",
+    "Icon_NoSoy.png",
+]
+
+icon_dir = Path(__file__).resolve().parent
+icon_paths = [icon_dir / name for name in ICON_ORDER]
 
 icons = []
 for p in icon_paths:
+    if not p.exists():
+        raise FileNotFoundError(f"Missing icon: {p}")
     img = Image.open(p).convert("RGBA")
 
     # crop to the visible content so icons with uneven padding line up
