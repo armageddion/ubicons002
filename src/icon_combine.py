@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
 import itertools
-from glob import glob
+from dataclasses import dataclass
 from pathlib import Path
 from PIL import Image, ImageDraw
 
 # ----------------------------------------------------------------------
 # 1. CONFIGURATION
 # ----------------------------------------------------------------------
-ICON_HEIGHT = 41             # height to which every icon is resized (aspect kept)
 GAP = 2                      # horizontal gap between icons in a row
-CANVAS_SIZE = (400, ICON_HEIGHT)  # final image dimensions
-BG_COLOR = (0, 0, 0, 255)     # black (opaque)
+BG_COLOR = (0, 0, 0, 255)    # black (opaque)
 MAX_ICONS = 5                # max number of icons in a combined image
 
 # ----------------------------------------------------------------------
-# 2. LOAD ALL ICON IMAGES IN THE REQUESTED ORDER
+# 2. ICON SOURCES
 # ----------------------------------------------------------------------
-# The first seven columns are fixed to:
+# 16-icon set. The first seven columns are fixed to:
 # 0 Vegetarian, 1 Vegan, 2 No Alcohol, 3 No Dairy, 4 No Gluten, 5 No Nuts, 6 Halal
 # The remaining nine icons are kept in a deterministic order.
-ICON_ORDER = [
+ICON_ORDER_16 = [
     "Icon_Vegetarian.png",
     "Icon_Vegen.png",
     "Icon_NoAlcohol.png",
@@ -37,57 +35,117 @@ ICON_ORDER = [
     "Icon_NoShellfish.png",
     "Icon_NoSoy.png",
 ]
+LEN16_SRC_DIR = Path(__file__).resolve().parent.parent / "length_16" / "src"
+LEN16_OUT_DIR = Path(__file__).resolve().parent.parent / "length_16"
 
-icon_dir = Path(__file__).resolve().parent
-icon_paths = [icon_dir / name for name in ICON_ORDER]
+# 7-icon set, in the same order as the first seven icons above.
+ICON_ORDER_5 = [
+    "Vegetarian_Black_Transparent.png",
+    "Vegen_Black_Transparent.png",
+    "NoAlcohol_Black_Transparent.png",
+    "NoDairy_Black_Transparent.png",
+    "NoGluten_Black_Transparent.png",
+    "NoNuts_Black_Transparent.png",
+    "Halal_Black_Transparent.png",
+]
+LEN5_SRC_DIR = Path(__file__).resolve().parent.parent / "length_5" / "src"
+LEN5_OUT_DIR = Path(__file__).resolve().parent.parent / "length_5"
 
-icons = []
-for p in icon_paths:
-    if not p.exists():
-        raise FileNotFoundError(f"Missing icon: {p}")
-    img = Image.open(p).convert("RGBA")
 
-    # crop to the visible content so icons with uneven padding line up
-    bbox = img.getchannel("A").getbbox()
-    if bbox:
-        img = img.crop(bbox)
+@dataclass
+class SetConfig:
+    name: str
+    icon_dir: Path
+    filenames: list
+    output_dir: Path
+    icon_height: int
+    canvas_width: int | None = None   # None = fit exactly the MAX_ICONS widest icons
+    invert: bool = False
 
-    # resize to a uniform height, keeping the aspect ratio
-    width = round(img.size[0] * ICON_HEIGHT / img.size[1])
-    img = img.resize((width, ICON_HEIGHT), Image.Resampling.LANCZOS)
 
-    icons.append(img)
-
-assert len(icons) == len(icon_paths)
+SETS = [
+    SetConfig("16-icon", LEN16_SRC_DIR, ICON_ORDER_16, LEN16_OUT_DIR,
+              icon_height=41, canvas_width=400),
+    SetConfig("5-icon", LEN5_SRC_DIR, ICON_ORDER_5, LEN5_OUT_DIR,
+              icon_height=82, invert=True),
+]
 
 # ----------------------------------------------------------------------
-# 3. GENERATE EVERY COMBINATION OF 1..MAX_ICONS ICONS (no duplicates)
+# 3. HELPERS
 # ----------------------------------------------------------------------
-output_dir = Path(__file__).resolve().parent.parent
-output_dir.mkdir(exist_ok=True)
+def load_icons(icon_dir, filenames, icon_height, invert):
+    icons = []
+    for name in filenames:
+        p = icon_dir / name
+        if not p.exists():
+            raise FileNotFoundError(f"Missing icon: {p}")
+        img = Image.open(p).convert("RGBA")
 
-total = 0
-for n in range(1, MAX_ICONS + 1):
-    for combo in itertools.combinations(range(len(icons)), n):
-        canvas = Image.new("RGBA", CANVAS_SIZE, BG_COLOR)
-        draw = ImageDraw.Draw(canvas)
+        # invert RGB (keep alpha) so black renderings become white like the 16-set
+        if invert:
+            r, g, b, a = img.split()
+            img = Image.merge("RGBA", (r.point(lambda v: 255 - v),
+                                       g.point(lambda v: 255 - v),
+                                       b.point(lambda v: 255 - v),
+                                       a))
 
-        # filename: 'X' for selected icons, 'O' otherwise
-        filename_code = ''.join('X' if i in combo else 'O' for i in range(len(icons)))
+        # crop to the visible content so icons with uneven padding line up
+        bbox = img.getchannel("A").getbbox()
+        if bbox:
+            img = img.crop(bbox)
 
-        # right-align the row of icons
-        total_width = sum(icons[i].size[0] for i in combo) + GAP * (n - 1)
-        start_x = CANVAS_SIZE[0] - total_width
-        y = (CANVAS_SIZE[1] - ICON_HEIGHT) // 2  # center vertically
+        # resize to a uniform height, keeping the aspect ratio
+        width = round(img.size[0] * icon_height / img.size[1])
+        img = img.resize((width, icon_height), Image.Resampling.LANCZOS)
 
-        x = start_x
-        for pos_idx in combo:
-            icon_img = icons[pos_idx]
-            canvas.paste(icon_img, (x, y), icon_img)   # use alpha
-            x += icon_img.size[0] + GAP
+        icons.append(img)
+    assert len(icons) == len(filenames)
+    return icons
 
-        filename = output_dir / f"{filename_code}.png"
-        canvas.save(filename, "PNG")
-        total += 1
 
-print(f"Generated {total} images in '{output_dir}'")
+def generate(cfg):
+    """Generate every combination of 1..MAX_ICONS icons (no duplicates)."""
+    icons = load_icons(cfg.icon_dir, cfg.filenames, cfg.icon_height, cfg.invert)
+    cfg.output_dir.mkdir(exist_ok=True)
+
+    if cfg.canvas_width is None:
+        # fit the row of the MAX_ICONS widest icons exactly
+        widest = sorted((img.size[0] for img in icons), reverse=True)[:MAX_ICONS]
+        canvas_width = sum(widest) + GAP * (MAX_ICONS - 1)
+    else:
+        canvas_width = cfg.canvas_width
+    canvas_size = (canvas_width, cfg.icon_height)
+
+    total = 0
+    for n in range(1, MAX_ICONS + 1):
+        for combo in itertools.combinations(range(len(icons)), n):
+            canvas = Image.new("RGBA", canvas_size, BG_COLOR)
+            draw = ImageDraw.Draw(canvas)
+
+            # filename: 'X' for selected icons, 'O' otherwise
+            filename_code = ''.join('X' if i in combo else 'O' for i in range(len(icons)))
+
+            # right-align the row of icons
+            row_width = sum(icons[i].size[0] for i in combo) + GAP * (n - 1)
+            start_x = canvas_width - row_width
+            y = (canvas_size[1] - cfg.icon_height) // 2  # center vertically
+
+            x = start_x
+            for pos_idx in combo:
+                icon_img = icons[pos_idx]
+                canvas.paste(icon_img, (x, y), icon_img)   # use alpha
+                x += icon_img.size[0] + GAP
+
+            filename = cfg.output_dir / f"{filename_code}.png"
+            canvas.save(filename, "PNG")
+            total += 1
+
+    print(f"Generated {total} images in '{cfg.output_dir}' "
+          f"(canvas {canvas_size[0]}x{canvas_size[1]})")
+    return total
+
+# ----------------------------------------------------------------------
+# 4. GENERATE BOTH SETS
+# ----------------------------------------------------------------------
+for cfg in SETS:
+    generate(cfg)
